@@ -1,0 +1,301 @@
+// Prisma schema for Nagdev Products Plant ERP & Industrial Operations Portal
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DATABASE_URL_UNPOOLED")
+}
+
+model Department {
+  id                  String               @id @default(cuid())
+  code                String               @unique // MANDI_PROCUREMENT, EXPELLER_CRUSHING, REFINERY_SEP, QC_LAB, TANK_FARM_WAREHOUSE, DISPATCH_LOGISTICS, UTILITIES_MAINTENANCE, ADMIN_ACCOUNTS
+  name                String
+  description         String?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  users               User[]
+  tasks               Task[]
+  maintenanceTickets  MaintenanceTicket[]
+  auditLogs           AuditLog[]
+}
+
+model User {
+  id                  String               @id @default(cuid())
+  fullName            String
+  email               String               @unique
+  mobile              String               @unique
+  badgeId             String               @unique
+  passwordHash        String
+  role                String               @default("OPERATOR") // SUPER_ADMIN, DEPT_MANAGER, SHIFT_SUPERVISOR, OPERATOR
+  status              String               @default("PENDING_APPROVAL") // PENDING_APPROVAL, ACTIVE, SUSPENDED
+  preferredShift      String               @default("SHIFT_1_MORNING") // SHIFT_1_MORNING, SHIFT_2_EVENING, SHIFT_3_NIGHT
+  departmentId        String
+  department          Department           @relation(fields: [departmentId], references: [id])
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  attendances         Attendance[]
+  tasksAssigned       Task[]               @relation("TaskAssignee")
+  tasksCreated        Task[]               @relation("TaskCreator")
+  procurementRecords  ProcurementRecord[]
+  crushingRecords     CrushingRecord[]
+  refineryBatches     RefineryBatch[]
+  qualityTests        QualityTest[]        @relation("TestedBy")
+  approvedQualityTests QualityTest[]       @relation("ApprovedBy")
+  storageTankDips     StorageTank[]
+  dispatchRecords     DispatchRecord[]
+  utilityRecords      UtilityRecord[]
+  reportedTickets     MaintenanceTicket[]  @relation("ReportedTickets")
+  resolvedTickets     MaintenanceTicket[]  @relation("ResolvedTickets")
+  auditLogs           AuditLog[]
+}
+
+model Attendance {
+  id                    String    @id @default(cuid())
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id])
+  date                  String    // YYYY-MM-DD
+  shiftType             String    // SHIFT_1_MORNING, SHIFT_2_EVENING, SHIFT_3_NIGHT
+  clockIn               DateTime  @default(now())
+  clockOut              DateTime?
+  ipAddress             String?
+  handoverNotes         String?
+  machineStatusSummary  String?
+  openBottlenecks       String?
+  verifiedBySupervisor  Boolean   @default(false)
+  createdAt             DateTime  @default(now())
+}
+
+model Task {
+  id                String      @id @default(cuid())
+  title             String
+  instructions      String
+  priority          String      @default("MEDIUM") // LOW, MEDIUM, HIGH, URGENT
+  status            String      @default("ASSIGNED") // ASSIGNED, IN_PROGRESS, SUBMITTED, VERIFIED_CLOSED
+  departmentId      String
+  department        Department  @relation(fields: [departmentId], references: [id])
+  creatorId         String
+  creator           User        @relation("TaskCreator", fields: [creatorId], references: [id])
+  assigneeId        String?
+  assignee          User?       @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  dueDate           DateTime?
+  resolutionNotes   String?
+  resolutionImage   String?
+  feedbackNotes     String?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+}
+
+model ProcurementRecord {
+  id                String      @id @default(cuid())
+  ticketNo          String      @unique
+  date              String      // YYYY-MM-DD
+  vehicleNo         String
+  driverMobile      String?
+  supplierName      String
+  apmcMarket        String
+  grossWeightMT     Float
+  tareWeightMT      Float
+  netSeedMT         Float
+  moisturePercent   Float       // Standard baseline max 6%
+  dustPercent       Float       // Foreign matter max 1%
+  damagePercent     Float       // Max 2%
+  deductionPercent  Float       // Computed by IS 525 engine
+  netPayableMT      Float       // Net Seed MT * (1 - deduction/100)
+  targetSiloId      String      // Raw Seed Silo 1, 2, or 3
+  ratePerMT         Float?      // Confidential commercial info (Admin visible only)
+  totalAmount       Float?      // Confidential commercial info (Admin visible only)
+  remarks           String?
+  recordedById      String
+  recordedBy        User        @relation(fields: [recordedById], references: [id])
+  createdAt         DateTime    @default(now())
+}
+
+model CrushingRecord {
+  id                        String    @id @default(cuid())
+  date                      String    // YYYY-MM-DD
+  shiftType                 String    // SHIFT_1_MORNING, SHIFT_2_EVENING, SHIFT_3_NIGHT
+  activeExpellers           Int       @default(6)
+  totalExpellers            Int       @default(8)
+  runningHours              Float     @default(8.0)
+  seedCrushedMT             Float
+  crudeOilOutputMT          Float
+  cakeBags50kg              Int
+  cakeTotalMT               Float
+  residualOilPercent        Float     // Target 8.0% - 9.0%
+  massBalanceYieldPercent   Float     // ((crudeOil + cakeTotal) / seedCrushed) * 100
+  yieldVariancePercent      Float     // abs(100 - massBalanceYieldPercent)
+  yieldAlertTriggered       Boolean   @default(false) // Triggered if variance > 1.5%
+  recordedById              String
+  recordedBy                User      @relation(fields: [recordedById], references: [id])
+  notes                     String?
+  createdAt                 DateTime  @default(now())
+}
+
+model RefineryBatch {
+  id                    String    @id @default(cuid())
+  batchNumber           String    @unique
+  date                  String    // YYYY-MM-DD
+  shiftType             String
+  inputCrudeOilMT       Float
+  targetGrade           String    // FSG, COMMERCIAL, PALE_PRESSED
+  bleachingEarthKg      Float     // Tonsil Earth 1.0% - 1.5%
+  activatedCarbonKg     Float     // 0.75% - 1.0%
+  hyflowSuperCelKg      Float     // VPLF pre-coat filter aid
+  tempCelsius           Float     // 95 - 110 deg C
+  vacuumInchesHg        Float     // target 28" Hg
+  filterPressureBar     Float     // target 3.5 bar
+  sepSolventLossLiters  Float     // n-Hexane loss
+  docResidualOilPercent Float     // Target < 1.0%
+  refinedOilOutputMT    Float
+  yieldPercent          Float
+  status                String    @default("COMPLETED") // IN_PROCESS, COMPLETED, QUALITY_PENDING, REPROCESS_BLEACHING
+  recordedById          String
+  recordedBy            User      @relation(fields: [recordedById], references: [id])
+  notes                 String?
+  createdAt             DateTime  @default(now())
+}
+
+model QualityTest {
+  id                  String           @id @default(cuid())
+  sampleCode          String           @unique
+  testDate            String           // YYYY-MM-DD
+  batchOrLotRef       String
+  sampleStage         String           // RAW_SEED, CRUDE_OIL, BLEACHED_OIL, REFINED_FSG, REFINED_COMMERCIAL, EXP_CAKE, DOC_MEAL
+  ffaPercent          Float            // Ricinoleic % (FSG <= 1.0%, Commercial <= 2.0%)
+  acidValue           Float            // mg KOH/g (FSG <= 2.0, Commercial <= 4.0)
+  mivPercent          Float            // Moisture & Insoluble (FSG <= 0.25%, Comm <= 0.5%)
+  lovibondYellow      Float            // 5.25" cell
+  lovibondRed         Float            // FSG <= 2.0R, Commercial <= 4.0R
+  iodineValue         Float            // 82 - 90
+  ricinoleicPercent   Float            // FSG min 85.0%, Commercial min 82.0%
+  status              String           // APPROVED, REPROCESS_BLEACHING, DOWNGRADE_TO_COMMERCIAL, REJECTED
+  coaNumber           String?          @unique
+  remarks             String?
+  testedById          String
+  testedBy            User             @relation("TestedBy", fields: [testedById], references: [id])
+  approvedById        String?
+  approvedBy          User?            @relation("ApprovedBy", fields: [approvedById], references: [id])
+  dispatchRecords     DispatchRecord[]
+  createdAt           DateTime         @default(now())
+}
+
+model StorageTank {
+  id                  String            @id @default(cuid())
+  tankNumber          Int               @unique
+  tankName            String            // Tank 1 to Tank 10
+  oilType             String            // CRUDE_CASTOR_OIL, REFINED_FSG, REFINED_COMMERCIAL, RESIDUAL_FOOTS
+  capacityMT          Float             @default(500.0)
+  radiusMeters        Float             @default(4.5)
+  heightMeters        Float             @default(9.0)
+  calibrationFactor   Float             @default(0.959) // Density in g/cm3 @ 30 deg C
+  currentDipCm        Float             @default(0.0)
+  calculatedVolumeMT  Float             @default(0.0) // formula: (pi * r^2 * h * density) / 10^6
+  lastDipDate         DateTime?
+  dipRecordedById     String?
+  dipRecordedBy       User?             @relation(fields: [dipRecordedById], references: [id])
+  dispatchRecords     DispatchRecord[]
+  updatedAt           DateTime          @updatedAt
+}
+
+model SolidWarehouseStock {
+  id                        String      @id @default(cuid())
+  itemType                  String      @unique // DOC_BAGS_SHED_A, DOC_BAGS_SHED_B, EPOXY_STEEL_DRUMS_200KG, IBC_TOTES_1000L
+  itemLabel                 String
+  unitType                  String      // BAGS, DRUMS, TOTES
+  currentUnits              Int         @default(0)
+  unitWeightKg              Float       @default(50.0)
+  totalMetricTonnes         Float       @default(0.0)
+  locationShed              String
+  updatedAt                 DateTime    @updatedAt
+}
+
+model DispatchRecord {
+  id                  String       @id @default(cuid())
+  invoiceNumber       String       @unique
+  date                String       // YYYY-MM-DD
+  customerName        String
+  destination         String
+  deliveryChallanNo   String
+  assignedTankId      String
+  assignedTank        StorageTank  @relation(fields: [assignedTankId], references: [id])
+  driverName          String
+  driverLicense       String?
+  vehicleNo           String
+  tareWeightMT        Float
+  grossWeightMT       Float
+  netOilMT            Float
+  domeSealNo          String
+  bottomValveSealNo   String
+  eWayBillNo          String
+  gatePassNo          String       @unique
+  status              String       @default("GATE_PASS_ISSUED") // PENDING_LOADING, WEIGHED_GROSS, SEALED_QC_ATTACHED, GATE_PASS_ISSUED, DISPATCHED
+  ratePerMT           Float?       // Admin confidential
+  totalAmount         Float?       // Admin confidential
+  coaId               String?
+  qualityCertificate  QualityTest? @relation(fields: [coaId], references: [id])
+  recordedById        String
+  recordedBy          User         @relation(fields: [recordedById], references: [id])
+  createdAt           DateTime     @default(now())
+}
+
+model UtilityRecord {
+  id                          String    @id @default(cuid())
+  date                        String    // YYYY-MM-DD
+  shiftType                   String
+  boilerSteamPressureKgCm2    Float     // target 8-10.5 kg/cm2
+  steamGeneratedMT            Float
+  huskFuelMT                  Float     // Castor seed husk fuel MT
+  agroBriquettesMT            Float     // Agro-briquettes MT
+  gridKwhStart                Float
+  gridKwhEnd                  Float
+  gridKwhConsumed             Float
+  dgRunningHours              Float
+  hsdDieselLiters             Float
+  specificKwhPerMTCrush       Float?    // Energy KPI: kWh / seedCrushed MT
+  specificBoilerFuelPerMTOil  Float?    // Energy KPI: Fuel MT / Oil produced MT
+  recordedById                String
+  recordedBy                  User      @relation(fields: [recordedById], references: [id])
+  notes                       String?
+  createdAt                   DateTime  @default(now())
+}
+
+model MaintenanceTicket {
+  id              String      @id @default(cuid())
+  ticketNumber    String      @unique
+  machineId       String      // e.g. EXP-04, VPLF-02, BOILER-01, ELEVATOR-03
+  machineName     String
+  departmentId    String
+  department      Department  @relation(fields: [departmentId], references: [id])
+  breakdownType   String      // MECHANICAL, ELECTRICAL, HYDRAULIC, INSTRUMENTATION, PREVENTIVE
+  priority        String      @default("MEDIUM") // LOW, MEDIUM, HIGH, CRITICAL
+  description     String
+  partsReplaced   String?     // Expeller worm shafts, collar rings, filter cloths, mechanical pump seals
+  downtimeHours   Float       @default(0.0)
+  status          String      @default("OPEN") // OPEN, IN_REPAIR, RESOLVED, CLOSED
+  reportedById    String
+  reportedBy      User        @relation("ReportedTickets", fields: [reportedById], references: [id])
+  resolvedById    String?
+  resolvedBy      User?       @relation("ResolvedTickets", fields: [resolvedById], references: [id])
+  resolvedAt      DateTime?
+  resolutionNotes String?
+  createdAt       DateTime    @default(now())
+}
+
+model AuditLog {
+  id            String      @id @default(cuid())
+  userId        String?
+  user          User?       @relation(fields: [userId], references: [id])
+  departmentId  String?
+  department    Department? @relation(fields: [departmentId], references: [id])
+  action        String      // CREATE, UPDATE, DELETE, APPROVE, REJECT, CLOCK_IN, CLOCK_OUT, GENERATE_REPORT
+  entityType    String      // PROCUREMENT, CRUSHING, REFINERY, QC, TANK_DIP, DISPATCH, UTILITY, MAINTENANCE, TASK, USER
+  entityId      String?
+  details       String?
+  ipAddress     String?
+  createdAt     DateTime    @default(now())
+}
